@@ -23,6 +23,7 @@ import com.google.android.exoplayer2.ui.PlayerNotificationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 class NotificationManager internal constructor(private val context: Context, private val exoPlayer: ExoPlayer, private val event: NotificationEventHolder) : PlayerNotificationManager.PrimaryActionReceiver, PlayerNotificationManager.NotificationListener {
     private var descriptionAdapter: DescriptionAdapter? = null
@@ -252,12 +253,14 @@ class NotificationManager internal constructor(private val context: Context, pri
     }
 
     override fun onNotificationPosted(notificationId: Int, notification: Notification, ongoing: Boolean) {
+        Timber.d("onNotificationPosted");
         scope.launch {
-            event.updateNotificationState(NotificationState.POSTED(notificationId, notification))
+            event.updateNotificationState(NotificationState.POSTED(notificationId, notification, ongoing))
         }
     }
 
     override fun onNotificationCancelled(notificationId: Int, dismissedByUser: Boolean) {
+        Timber.d("onNotificationCancelled");
         scope.launch {
             event.updateNotificationState(NotificationState.CANCELLED(notificationId))
         }
