@@ -27,6 +27,9 @@ class PlayerEventHolder {
     private var _onPlaybackMetadata = MutableSharedFlow<PlaybackMetadata>(1)
     var onPlaybackMetadata = _onPlaybackMetadata.asSharedFlow()
 
+    private var _onPersistentPlayWhenReadyChange = MutableSharedFlow<Boolean>(1)
+    var onPersistentPlayWhenReadyChange = _onPersistentPlayWhenReadyChange.asSharedFlow()
+
     internal fun updateAudioPlayerState(state: AudioPlayerState) {
         coroutineScope.launch {
             _stateChange.emit(state)
@@ -55,6 +58,12 @@ class PlayerEventHolder {
     internal fun updateOnPlaybackMetadata(metadata: PlaybackMetadata) {
         coroutineScope.launch {
             _onPlaybackMetadata.emit(metadata)
+        }
+    }
+
+    internal fun updateOnPersistentPlayWhenReadyChange(persistentPlayWhenReady: Boolean) {
+        coroutineScope.launch {
+            _onPersistentPlayWhenReadyChange.emit(persistentPlayWhenReady)
         }
     }
 }

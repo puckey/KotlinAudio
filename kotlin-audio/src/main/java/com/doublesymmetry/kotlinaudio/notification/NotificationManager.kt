@@ -263,9 +263,14 @@ class NotificationManager internal constructor(private val context: Context, pri
         }
     }
 
-    internal fun onPlay() {
+    internal fun activateMediaSession() {
         mediaSession.isActive = true
     }
+
+    internal fun deactivateMediaSession() {
+        mediaSession.isActive = false
+    }
+
 
     internal fun reload() {
         internalManager?.invalidate()

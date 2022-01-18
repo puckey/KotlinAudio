@@ -154,15 +154,14 @@ abstract class BaseAudioPlayer internal constructor(private val context: Context
 
     fun togglePlaying() {
         if (exoPlayer.isPlaying) {
-            exoPlayer.pause()
+            pause()
         } else {
-            exoPlayer.play()
+            play()
         }
     }
 
     fun play() {
         exoPlayer.play()
-        notificationManager.onPlay()
     }
 
     fun pause() {
@@ -325,7 +324,6 @@ abstract class BaseAudioPlayer internal constructor(private val context: Context
             AUDIOFOCUS_LOSS -> {
                 isPermanent = true
                 isPaused = true
-                abandonAudioFocusIfHeld()
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> isPaused = true
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> if (playerOptions.alwaysPauseOnInterruption) isPaused = true else isDucking = true
@@ -347,6 +345,27 @@ abstract class BaseAudioPlayer internal constructor(private val context: Context
     }
 
     inner class PlayerListener : Listener {
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            super.onPlayWhenReadyChanged(playWhenReady, reason)
+            when (reason) {
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS,
+                Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM,
+                Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE,
+                Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> {
+                    if (playWhenReady) {
+                        notificationManager.activateMediaSession();
+                        playerEventHolder.updateAudioPlayerState(AudioPlayerState.IDLE)
+                        requestAudioFocus();
+                        playerEventHolder.updateOnPersistentPlayWhenReadyChange(true);
+                    } else {
+                        notificationManager.deactivateMediaSession();
+                        abandonAudioFocusIfHeld()
+                        playerEventHolder.updateOnPersistentPlayWhenReadyChange(false);
+                    }
+                }
+            }
+        }
+
         override fun onMetadata(metadata: Metadata) {
             PlaybackMetadata.fromId3Metadata(metadata)?.let { playerEventHolder.updateOnPlaybackMetadata(it) }
             PlaybackMetadata.fromIcy(metadata)?.let { playerEventHolder.updateOnPlaybackMetadata(it) }
@@ -357,14 +376,8 @@ abstract class BaseAudioPlayer internal constructor(private val context: Context
         override fun onPlaybackStateChanged(playbackState: Int) {
             when (playbackState) {
                 Player.STATE_BUFFERING -> playerEventHolder.updateAudioPlayerState(if (exoPlayer.playWhenReady) AudioPlayerState.BUFFERING else AudioPlayerState.LOADING)
-                Player.STATE_READY -> {
-                    requestAudioFocus()
-                    playerEventHolder.updateAudioPlayerState(AudioPlayerState.READY)
-                }
-                Player.STATE_IDLE -> {
-                    abandonAudioFocusIfHeld()
-                    playerEventHolder.updateAudioPlayerState(AudioPlayerState.IDLE)
-                }
+                Player.STATE_READY -> playerEventHolder.updateAudioPlayerState(AudioPlayerState.READY)
+                Player.STATE_IDLE -> playerEventHolder.updateAudioPlayerState(AudioPlayerState.IDLE)
                 Player.STATE_ENDED -> playerEventHolder.updateAudioPlayerState(AudioPlayerState.ENDED)
             }
         }
