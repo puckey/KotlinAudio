@@ -19,6 +19,7 @@ import com.doublesymmetry.kotlinaudio.utils.isJUnitTest
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
+import com.google.android.exoplayer2.ui.DefaultMediaDescriptionAdapter
 import com.google.android.exoplayer2.ui.PlayerNotificationManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +27,7 @@ import kotlinx.coroutines.launch
 
 class NotificationManager internal constructor(private val context: Context, private val exoPlayer: ExoPlayer, private val event: NotificationEventHolder) : PlayerNotificationManager.PrimaryActionReceiver, PlayerNotificationManager.NotificationListener {
     private var descriptionAdapter: DescriptionAdapter? = null
-    private var internalManager: PlayerNotificationManager? = null
+    private var internalManager: InternalNotificationManager? = null
 
     private val mediaSession: MediaSessionCompat = MediaSessionCompat(context, "AudioPlayerSession")
     private val mediaSessionConnector: MediaSessionConnector = MediaSessionConnector(mediaSession)
@@ -73,6 +74,15 @@ class NotificationManager internal constructor(private val context: Context, pri
         get() = internalManager?.useStopAction ?: false
         set(value) {
             internalManager?.useStopAction = value
+        }
+
+    /**
+     * Controls whether or not this button should appear when the notification is compact (collapsed).
+     */
+    var showStopButtonCompact: Boolean
+        get() = internalManager?.useStopActionInCompactView ?: false
+        set(value) {
+            internalManager?.useStopActionInCompactView = value
         }
 
     var showForwardButton: Boolean
@@ -185,26 +195,44 @@ class NotificationManager internal constructor(private val context: Context, pri
             }
         }, context, config.pendingIntent)
 
-        internalManager = PlayerNotificationManager.Builder(context, NOTIFICATION_ID, channelId).apply {
-            setMediaDescriptionAdapter(descriptionAdapter!!)
-            setNotificationListener(this@NotificationManager)
-
-            if (buttons.isNotEmpty()) {
-                setPrimaryActionReceiver(this@NotificationManager)
-
-                config.buttons.forEach { button ->
-                    when (button) {
-                        is NotificationButton.PLAY -> button.icon?.let { setPlayActionIconResourceId(it) }
-                        is NotificationButton.PAUSE -> button.icon?.let { setPauseActionIconResourceId(it) }
-                        is NotificationButton.STOP -> button.icon?.let { setStopActionIconResourceId(it) }
-                        is NotificationButton.FORWARD -> button.icon?.let { setFastForwardActionIconResourceId(it) }
-                        is NotificationButton.BACKWARD -> button.icon?.let { setRewindActionIconResourceId(it) }
-                        is NotificationButton.NEXT -> button.icon?.let { setNextActionIconResourceId(it) }
-                        is NotificationButton.PREVIOUS -> button.icon?.let { setPreviousActionIconResourceId(it) }
-                    }
-                }
+        val smallIcon = config.smallIcon ?: R.drawable.exo_notification_small_icon
+        var playIcon = R.drawable.exo_notification_play
+        var pauseIcon = R.drawable.exo_notification_pause
+        var stopIcon = R.drawable.exo_notification_stop
+        var forwardIcon = R.drawable.exo_notification_fastforward
+        var backwardIcon = R.drawable.exo_notification_rewind
+        var nextIcon = R.drawable.exo_notification_previous
+        var previousButton = R.drawable.exo_notification_next
+        for (button in config.buttons) {
+            when (button) {
+                is NotificationButton.PLAY -> button.icon?.let { playIcon = it }
+                is NotificationButton.PAUSE -> button.icon?.let { pauseIcon = it }
+                is NotificationButton.STOP -> button.icon?.let { stopIcon = it }
+                is NotificationButton.FORWARD -> button.icon?.let { forwardIcon = it }
+                is NotificationButton.BACKWARD -> button.icon?.let { backwardIcon = it }
+                is NotificationButton.NEXT -> button.icon?.let { nextIcon = it }
+                is NotificationButton.PREVIOUS -> button.icon?.let { previousButton = it }
             }
-        }.build()
+        }
+        internalManager =
+            InternalNotificationManager(
+                context,
+                channelId,
+                NOTIFICATION_ID,
+                DefaultMediaDescriptionAdapter(null),
+                this@NotificationManager,
+                if (buttons.isNotEmpty()) this@NotificationManager else null,
+                null,
+                smallIcon,
+                playIcon,
+                pauseIcon,
+                stopIcon,
+                forwardIcon,
+                backwardIcon,
+                nextIcon,
+                previousButton,
+                null
+            )
 
         if (!isJUnitTest()) {
             internalManager?.apply {
@@ -215,7 +243,10 @@ class NotificationManager internal constructor(private val context: Context, pri
                 config.buttons.forEach { button ->
                     when (button) {
                         is NotificationButton.PLAY, is NotificationButton.PAUSE -> showPlayPauseButton = true
-                        is NotificationButton.STOP -> showStopButton = true
+                        is NotificationButton.STOP -> {
+                            showStopButton = true
+                            showStopButtonCompact = button.isCompact
+                        }
                         is NotificationButton.FORWARD -> {
                             showForwardButton = true
                             showForwardButtonCompact = button.isCompact
