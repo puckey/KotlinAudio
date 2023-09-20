@@ -1,7 +1,6 @@
 package com.doublesymmetry.kotlinaudio.models
 
-import com.google.android.exoplayer2.C
-import com.doublesymmetry.kotlinaudio.models.AudioContentType
+import com.doublesymmetry.kotlinaudio.players.BaseAudioPlayer
 
 data class PlayerConfig(
     /**
@@ -30,5 +29,5 @@ data class PlayerConfig(
     /**
      * The audio content type.
      */
-    val audioContentType: AudioContentType = AudioContentType.MUSIC
+    val audioContentType: AudioContentType = AudioContentType.MUSIC,
 )

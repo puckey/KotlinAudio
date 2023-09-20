@@ -20,12 +20,39 @@ import androidx.media.AudioManagerCompat.AUDIOFOCUS_GAIN
 import com.doublesymmetry.kotlinaudio.event.EventHolder
 import com.doublesymmetry.kotlinaudio.event.NotificationEventHolder
 import com.doublesymmetry.kotlinaudio.event.PlayerEventHolder
-import com.doublesymmetry.kotlinaudio.models.*
+import com.doublesymmetry.kotlinaudio.models.AudioContentType
+import com.doublesymmetry.kotlinaudio.models.AudioItem
+import com.doublesymmetry.kotlinaudio.models.AudioItemHolder
+import com.doublesymmetry.kotlinaudio.models.AudioItemTransitionReason
+import com.doublesymmetry.kotlinaudio.models.AudioPlayerState
+import com.doublesymmetry.kotlinaudio.models.BufferConfig
+import com.doublesymmetry.kotlinaudio.models.CacheConfig
+import com.doublesymmetry.kotlinaudio.models.DefaultPlayerOptions
+import com.doublesymmetry.kotlinaudio.models.MediaSessionCallback
+import com.doublesymmetry.kotlinaudio.models.MediaType
+import com.doublesymmetry.kotlinaudio.models.PlayWhenReadyChangeData
+import com.doublesymmetry.kotlinaudio.models.PlaybackError
+import com.doublesymmetry.kotlinaudio.models.PlayerConfig
+import com.doublesymmetry.kotlinaudio.models.PlayerOptions
+import com.doublesymmetry.kotlinaudio.models.PositionChangedReason
 import com.doublesymmetry.kotlinaudio.notification.NotificationManager
 import com.doublesymmetry.kotlinaudio.players.components.PlayerCache
+import com.doublesymmetry.kotlinaudio.players.components.getAudioItemHolder
 import com.doublesymmetry.kotlinaudio.utils.isUriLocal
-import com.google.android.exoplayer2.*
-import com.google.android.exoplayer2.DefaultLoadControl.*
+import com.google.android.exoplayer2.C
+import com.google.android.exoplayer2.DefaultLoadControl
+import com.google.android.exoplayer2.DefaultLoadControl.Builder
+import com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_BACK_BUFFER_DURATION_MS
+import com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS
+import com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS
+import com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_MAX_BUFFER_MS
+import com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_MIN_BUFFER_MS
+import com.google.android.exoplayer2.ExoPlayer
+import com.google.android.exoplayer2.ForwardingPlayer
+import com.google.android.exoplayer2.MediaItem
+import com.google.android.exoplayer2.MediaMetadata
+import com.google.android.exoplayer2.PlaybackException
+import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.Player.Listener
 import com.google.android.exoplayer2.audio.AudioAttributes
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
@@ -38,14 +65,18 @@ import com.google.android.exoplayer2.source.dash.DefaultDashChunkSource
 import com.google.android.exoplayer2.source.hls.HlsMediaSource
 import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource
-import com.google.android.exoplayer2.upstream.*
+import com.google.android.exoplayer2.upstream.DataSource
+import com.google.android.exoplayer2.upstream.DataSpec
+import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory
+import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
+import com.google.android.exoplayer2.upstream.RawResourceDataSource
 import com.google.android.exoplayer2.upstream.cache.CacheDataSource
 import com.google.android.exoplayer2.upstream.cache.SimpleCache
 import com.google.android.exoplayer2.util.Util
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.util.*
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 abstract class BaseAudioPlayer internal constructor(
@@ -65,7 +96,7 @@ abstract class BaseAudioPlayer internal constructor(
     open val playerOptions: PlayerOptions = DefaultPlayerOptions()
 
     open val currentItem: AudioItem?
-        get() = exoPlayer.currentMediaItem?.localConfiguration?.tag as AudioItem?
+        get() = exoPlayer.currentMediaItem?.getAudioItemHolder()?.audioItem
 
     private var _equalizer: Equalizer? = null
     open val equalizer: Equalizer
@@ -104,6 +135,9 @@ abstract class BaseAudioPlayer internal constructor(
             return if (exoPlayer.duration == C.TIME_UNSET) 0
             else exoPlayer.duration
         }
+
+    val isCurrentMediaItemLive: Boolean
+        get() = exoPlayer.isCurrentMediaItemLive
 
     private var oldPosition = 0L
 
@@ -186,8 +220,8 @@ abstract class BaseAudioPlayer internal constructor(
     private var hasAudioFocus = false
     private var wasDucking = false
 
-    protected val mediaSession = MediaSessionCompat(context, "KotlinAudioPlayer")
-    protected val mediaSessionConnector = MediaSessionConnector(mediaSession)
+    private val mediaSession = MediaSessionCompat(context, "KotlinAudioPlayer")
+    private val mediaSessionConnector = MediaSessionConnector(mediaSession)
 
     init {
         if (cacheConfig != null) {
@@ -234,6 +268,9 @@ abstract class BaseAudioPlayer internal constructor(
                 .build();
             exoPlayer.setAudioAttributes(audioAttributes, playerConfig.handleAudioFocus);
             mediaSessionConnector.setPlayer(playerToUse)
+            mediaSessionConnector.setMediaMetadataProvider {
+                notificationManager.getMediaMetadataCompat()
+            }
         }
 
         playerEventHolder.updateAudioPlayerState(AudioPlayerState.IDLE)
@@ -269,10 +306,6 @@ abstract class BaseAudioPlayer internal constructor(
                 playerEventHolder.updateOnPlayerActionTriggeredExternally(MediaSessionCallback.STOP)
             }
 
-            override fun stop(reset: Boolean) {
-                playerEventHolder.updateOnPlayerActionTriggeredExternally(MediaSessionCallback.STOP)
-            }
-
             override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
                 playerEventHolder.updateOnPlayerActionTriggeredExternally(
                     MediaSessionCallback.SEEK(
@@ -291,13 +324,9 @@ abstract class BaseAudioPlayer internal constructor(
         }
     }
 
-    internal fun updateNotificationMetadataIfAutomatic() {
+    internal fun updateNotificationIfNecessary(overrideAudioItem: AudioItem? = null) {
         if (automaticallyUpdateNotificationMetadata) {
-            notificationManager.notificationMetadata = NotificationMetadata(
-                currentItem?.title,
-                currentItem?.artist,
-                currentItem?.artwork
-            )
+            notificationManager.overrideAudioItem = overrideAudioItem
         }
     }
 
@@ -377,12 +406,14 @@ abstract class BaseAudioPlayer internal constructor(
      * state to transition to AudioPlayerState.IDLE and the player will release the loaded media and
      * resources required for playback.
      */
+    @CallSuper
     open fun stop() {
         playerState = AudioPlayerState.STOPPED
         exoPlayer.playWhenReady = false
         exoPlayer.stop()
     }
 
+    @CallSuper
     open fun clear() {
         exoPlayer.clearMediaItems()
     }
@@ -391,7 +422,7 @@ abstract class BaseAudioPlayer internal constructor(
      * Pause playback whenever an item plays to its end.
      */
     fun setPauseAtEndOfItem(pause: Boolean) {
-        exoPlayer.setPauseAtEndOfMediaItems(pause)
+        exoPlayer.pauseAtEndOfMediaItems = pause
     }
 
     /**
@@ -474,14 +505,12 @@ abstract class BaseAudioPlayer internal constructor(
         _equalizer = null
     }
 
-    private fun getMediaItemFromAudioItem(audioItem: AudioItem): MediaItem {
-        return MediaItem.Builder().setUri(audioItem.audioUrl).setTag(AudioItemHolder(audioItem)).build()
-    }
-
     protected fun getMediaSourceFromAudioItem(audioItem: AudioItem): MediaSource {
-        val factory: DataSource.Factory
         val uri = Uri.parse(audioItem.audioUrl)
-        val mediaItem = getMediaItemFromAudioItem(audioItem)
+        val mediaItem = MediaItem.Builder()
+            .setUri(audioItem.audioUrl)
+            .setTag(AudioItemHolder(audioItem))
+            .build()
 
         val userAgent =
             if (audioItem.options == null || audioItem.options!!.userAgent.isNullOrBlank()) {
@@ -490,7 +519,7 @@ abstract class BaseAudioPlayer internal constructor(
                 audioItem.options!!.userAgent
             }
 
-        factory = when {
+        val factory: DataSource.Factory = when {
             audioItem.options?.resourceId != null -> {
                 val raw = RawResourceDataSource(context)
                 raw.open(DataSpec(uri))
@@ -602,8 +631,8 @@ abstract class BaseAudioPlayer internal constructor(
 
     override fun onAudioFocusChange(focusChange: Int) {
         Timber.d("Audio focus changed")
-        var isPermanent = focusChange == AUDIOFOCUS_LOSS
-        var isPaused = when (focusChange) {
+        val isPermanent = focusChange == AUDIOFOCUS_LOSS
+        val isPaused = when (focusChange) {
             AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> true
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> playerOptions.alwaysPauseOnInterruption
             else -> false
@@ -611,7 +640,7 @@ abstract class BaseAudioPlayer internal constructor(
         if (!playerConfig.handleAudioFocus) {
             if (isPermanent) abandonAudioFocusIfHeld()
 
-            var isDucking = focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
+            val isDucking = focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
                     && !playerOptions.alwaysPauseOnInterruption
             if (isDucking) {
                 volumeMultiplier = 0.5f
@@ -634,16 +663,12 @@ abstract class BaseAudioPlayer internal constructor(
          * Called when there is metadata associated with the current playback time.
          */
         override fun onMetadata(metadata: Metadata) {
-            PlaybackMetadata.fromId3Metadata(metadata)
-                ?.let { playerEventHolder.updateOnPlaybackMetadata(it) }
-            PlaybackMetadata.fromIcy(metadata)
-                ?.let { playerEventHolder.updateOnPlaybackMetadata(it) }
-            PlaybackMetadata.fromVorbisComment(metadata)
-                ?.let { playerEventHolder.updateOnPlaybackMetadata(it) }
-            PlaybackMetadata.fromQuickTime(metadata)
-                ?.let { playerEventHolder.updateOnPlaybackMetadata(it) }
+            playerEventHolder.updateOnTimedMetadata(metadata)
         }
 
+        override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+            playerEventHolder.updateOnCommonMetadata(mediaMetadata)
+        }
 
         /**
          * A position discontinuity occurs when the playing period changes, the playback position
@@ -709,7 +734,7 @@ abstract class BaseAudioPlayer internal constructor(
                 )
             }
 
-            updateNotificationMetadataIfAutomatic()
+            updateNotificationIfNecessary()
         }
 
         /**
@@ -731,7 +756,7 @@ abstract class BaseAudioPlayer internal constructor(
             for (i in 0 until events.size()) {
                 when (events[i]) {
                     Player.EVENT_PLAYBACK_STATE_CHANGED -> {
-                        var state = when (player.playbackState) {
+                        val state = when (player.playbackState) {
                             Player.STATE_BUFFERING -> AudioPlayerState.BUFFERING
                             Player.STATE_READY -> AudioPlayerState.READY
                             Player.STATE_IDLE ->
@@ -743,7 +768,9 @@ abstract class BaseAudioPlayer internal constructor(
                                     null
                                 else
                                     AudioPlayerState.IDLE
-                            Player.STATE_ENDED -> AudioPlayerState.ENDED
+                            Player.STATE_ENDED ->
+                                if (player.mediaItemCount > 0) AudioPlayerState.ENDED
+                                else AudioPlayerState.IDLE
                             else -> null // noop
                         }
                         if (state != null && state != playerState) {
@@ -775,7 +802,7 @@ abstract class BaseAudioPlayer internal constructor(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            var _playbackError = PlaybackError(
+            val _playbackError = PlaybackError(
                 error.errorCodeName
                     .replace("ERROR_CODE_", "")
                     .lowercase(Locale.getDefault())
