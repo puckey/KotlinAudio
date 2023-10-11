@@ -2,4 +2,4 @@
 
 set -e
 
-"$(dirname "${BASH_SOURCE[0]}")"/../gradlew -x test  build publishToMavenLocal
+"$(dirname "${BASH_SOURCE[0]}")"/../gradlew -x test -x lint build publishToMavenLocal
