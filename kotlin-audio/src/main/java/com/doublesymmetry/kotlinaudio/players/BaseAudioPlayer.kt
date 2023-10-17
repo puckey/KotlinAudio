@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.os.ResultReceiver
 import android.support.v4.media.RatingCompat
 import android.support.v4.media.session.MediaSessionCompat
+import android.util.Log
 import androidx.annotation.CallSuper
 import androidx.core.content.ContextCompat
 import androidx.media.AudioAttributesCompat
@@ -99,12 +100,16 @@ abstract class BaseAudioPlayer internal constructor(
         get() = exoPlayer.currentMediaItem?.getAudioItemHolder()?.audioItem
 
     private var _equalizer: Equalizer? = null
-    open val equalizer: Equalizer
+    open val equalizer: Equalizer?
         get() {
             if (_equalizer == null) {
-                _equalizer = Equalizer(0, exoPlayer.audioSessionId)
+                try {
+                    _equalizer = Equalizer(0, exoPlayer.audioSessionId)
+                }  catch (e: Exception) {
+                    Log.e("EqualizerError", e.message, e)
+                }
             }
-            return _equalizer!!
+            return _equalizer
         }
 
     var playbackError: PlaybackError? = null
@@ -450,6 +455,7 @@ abstract class BaseAudioPlayer internal constructor(
     }
 
     open fun setEqualizerLevels(levels: ShortArray): Boolean {
+        var equalizer = equalizer ?: return false;
         var changed = false
         if (levels.size != equalizer.numberOfBands.toInt()) {
             throw Error("Invalid number of bands.")
@@ -467,7 +473,8 @@ abstract class BaseAudioPlayer internal constructor(
         return changed
     }
 
-    open fun getEqualizerPresets(): Array<String> {
+    open fun getEqualizerPresets(): Array<String>? {
+        var equalizer = equalizer ?: return null;
         val number = equalizer.numberOfPresets.toInt()
         val presetNames = Array<String>(number) {""}
         for (i in 0 until number) {
@@ -478,6 +485,7 @@ abstract class BaseAudioPlayer internal constructor(
     }
 
     open fun setEqualizerPreset(presetName: String): Boolean {
+        var equalizer = equalizer ?: return false;
         val currentPreset = equalizer.currentPreset
         for (i in 0 until equalizer.numberOfPresets.toInt()) {
             val currentPresetName = equalizer.getPresetName(i.toShort())
@@ -494,13 +502,14 @@ abstract class BaseAudioPlayer internal constructor(
     }
 
     open fun setEqualizerEnabled(enabled: Boolean): Boolean {
+        var equalizer = equalizer ?: return false;
         val changed = enabled != equalizer.enabled
         equalizer.enabled = enabled
         return changed
     }
 
     open fun clearEqualizer() {
-        var equalizer = _equalizer ?: return
+        var equalizer = equalizer ?: return;
         equalizer.release()
         _equalizer = null
     }
