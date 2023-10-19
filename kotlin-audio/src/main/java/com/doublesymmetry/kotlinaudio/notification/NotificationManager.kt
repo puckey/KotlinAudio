@@ -29,6 +29,7 @@ import com.doublesymmetry.kotlinaudio.models.NotificationButton
 import com.doublesymmetry.kotlinaudio.models.NotificationConfig
 import com.doublesymmetry.kotlinaudio.models.NotificationState
 import com.doublesymmetry.kotlinaudio.players.components.getAudioItemHolder
+import com.google.android.exoplayer2.C
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.ext.mediasession.MediaSessionConnector
 import com.google.android.exoplayer2.ext.mediasession.TimelineQueueNavigator
@@ -193,7 +194,12 @@ class NotificationManager internal constructor(
     private fun getDuration(index: Int? = null): Long? {
         val mediaItem = if (index == null) player.currentMediaItem
             else player.getMediaItemAt(index)
-        return mediaItem?.getAudioItemHolder()?.audioItem?.duration ?: -1
+
+        return if (player.isCurrentMediaItemDynamic || player.duration == C.TIME_UNSET) {
+            overrideAudioItem?.duration ?: mediaItem?.getAudioItemHolder()?.audioItem?.duration ?: -1
+        } else {
+            overrideAudioItem?.duration ?: player.duration
+        }
     }
 
     private fun getUserRating(index: Int? = null): RatingCompat? {
@@ -352,12 +358,25 @@ class NotificationManager internal constructor(
     }
 
     public fun getMediaMetadataCompat(): MediaMetadataCompat {
+        val currentItemMetadata = player.currentMediaItem?.mediaMetadata
+
         return MediaMetadataCompat.Builder().apply {
             getArtist()?.let {
                 putString(MediaMetadataCompat.METADATA_KEY_ARTIST, it)
             }
             getTitle()?.let {
                 putString(MediaMetadataCompat.METADATA_KEY_TITLE, it)
+                putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, it)
+            }
+            currentItemMetadata?.subtitle?.let {
+                putString(
+                    MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE, it.toString()
+                )
+            }
+            currentItemMetadata?.description?.let {
+                putString(
+                    MediaMetadataCompat.METADATA_KEY_DISPLAY_DESCRIPTION, it.toString()
+                )
             }
             getAlbumTitle()?.let {
                 putString(MediaMetadataCompat.METADATA_KEY_ALBUM, it)
