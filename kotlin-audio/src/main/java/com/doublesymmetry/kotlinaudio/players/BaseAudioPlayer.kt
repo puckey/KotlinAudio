@@ -52,6 +52,7 @@ import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.ForwardingPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.MediaMetadata
+import com.google.android.exoplayer2.ParserException
 import com.google.android.exoplayer2.PlaybackException
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.Player.Listener
@@ -67,9 +68,19 @@ import com.google.android.exoplayer2.source.hls.HlsMediaSource
 import com.google.android.exoplayer2.source.smoothstreaming.DefaultSsChunkSource
 import com.google.android.exoplayer2.source.smoothstreaming.SsMediaSource
 import com.google.android.exoplayer2.upstream.DataSource
+import com.google.android.exoplayer2.upstream.DataSourceException
 import com.google.android.exoplayer2.upstream.DataSpec
 import com.google.android.exoplayer2.upstream.DefaultDataSourceFactory
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
+import com.google.android.exoplayer2.upstream.DefaultLoadErrorHandlingPolicy.DEFAULT_LOCATION_EXCLUSION_MS
+import com.google.android.exoplayer2.upstream.DefaultLoadErrorHandlingPolicy.DEFAULT_TRACK_EXCLUSION_MS
+import com.google.android.exoplayer2.upstream.HttpDataSource.CleartextNotPermittedException
+import com.google.android.exoplayer2.upstream.HttpDataSource.InvalidResponseCodeException
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy.FallbackOptions
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy.FallbackSelection
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
+import com.google.android.exoplayer2.upstream.Loader.UnexpectedLoaderException
 import com.google.android.exoplayer2.upstream.RawResourceDataSource
 import com.google.android.exoplayer2.upstream.cache.CacheDataSource
 import com.google.android.exoplayer2.upstream.cache.SimpleCache
@@ -77,6 +88,8 @@ import com.google.android.exoplayer2.util.Util
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import java.io.FileNotFoundException
+import java.io.IOException
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -95,7 +108,7 @@ abstract class BaseAudioPlayer internal constructor(
     val notificationManager: NotificationManager
 
     open val playerOptions: PlayerOptions = DefaultPlayerOptions()
-
+    private val retryPolicy = RetryPolicy()
     open val currentItem: AudioItem?
         get() = exoPlayer.currentMediaItem?.getAudioItemHolder()?.audioItem
 
@@ -561,16 +574,19 @@ abstract class BaseAudioPlayer internal constructor(
 
     private fun createDashSource(mediaItem: MediaItem, factory: DataSource.Factory?): MediaSource {
         return DashMediaSource.Factory(DefaultDashChunkSource.Factory(factory!!), factory)
+            .setLoadErrorHandlingPolicy(retryPolicy)
             .createMediaSource(mediaItem)
     }
 
     private fun createHlsSource(mediaItem: MediaItem, factory: DataSource.Factory?): MediaSource {
         return HlsMediaSource.Factory(factory!!)
+            .setLoadErrorHandlingPolicy(retryPolicy)
             .createMediaSource(mediaItem)
     }
 
     private fun createSsSource(mediaItem: MediaItem, factory: DataSource.Factory?): MediaSource {
         return SsMediaSource.Factory(DefaultSsChunkSource.Factory(factory!!), factory)
+            .setLoadErrorHandlingPolicy(retryPolicy)
             .createMediaSource(mediaItem)
     }
 
@@ -582,6 +598,7 @@ abstract class BaseAudioPlayer internal constructor(
             factory, DefaultExtractorsFactory()
                 .setConstantBitrateSeekingEnabled(true)
         )
+            .setLoadErrorHandlingPolicy(retryPolicy)
             .createMediaSource(mediaItem)
     }
 
@@ -666,6 +683,56 @@ abstract class BaseAudioPlayer internal constructor(
     companion object {
         const val APPLICATION_NAME = "react-native-track-player"
     }
+
+
+    /**
+     * Reworked version of ExoPlayer's DefaultLoadErrorHandlingPolicy: https://developer.android.com/reference/androidx/media3/exoplayer/upstream/DefaultLoadErrorHandlingPolicy
+     */
+    inner class RetryPolicy : LoadErrorHandlingPolicy {
+        private val eligibleResponseCodes = setOf(403, 404, 410, 416, 500, 503)
+        override fun getFallbackSelectionFor(
+            fallbackOptions: FallbackOptions, loadErrorInfo: LoadErrorInfo
+        ): FallbackSelection? {
+            if (!isEligibleForFallback(loadErrorInfo.exception)) {
+                return null
+            }
+            // Prefer location fallbacks to track fallbacks, when both are available.
+            if (fallbackOptions.isFallbackAvailable(LoadErrorHandlingPolicy.FALLBACK_TYPE_LOCATION)) {
+                return FallbackSelection(
+                    LoadErrorHandlingPolicy.FALLBACK_TYPE_LOCATION,
+                    DEFAULT_LOCATION_EXCLUSION_MS
+                )
+            } else if (fallbackOptions.isFallbackAvailable(LoadErrorHandlingPolicy.FALLBACK_TYPE_TRACK)) {
+                return FallbackSelection(
+                    LoadErrorHandlingPolicy.FALLBACK_TYPE_TRACK,
+                    DEFAULT_TRACK_EXCLUSION_MS
+                )
+            }
+            return null
+        }
+
+        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorInfo): Long {
+            val exception = loadErrorInfo.exception
+            return if (exception is ParserException
+                || exception is FileNotFoundException
+                || exception is CleartextNotPermittedException
+                || exception is UnexpectedLoaderException
+                || DataSourceException.isCausedByPositionOutOfRange(exception)
+            ) C.TIME_UNSET else (loadErrorInfo.errorCount * 500)
+                .coerceAtLeast(100)
+                .coerceAtMost(2000)
+                .toLong()
+        }
+
+        override fun getMinimumLoadableRetryCount(dataType: Int): Int {
+            return 20
+        }
+
+        private fun isEligibleForFallback(exception: IOException?): Boolean {
+            return (exception as? InvalidResponseCodeException)?.responseCode in eligibleResponseCodes
+        }
+    }
+
 
     inner class PlayerListener : Listener {
         /**
